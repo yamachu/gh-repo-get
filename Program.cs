@@ -1,4 +1,4 @@
-﻿using ConsoleAppFramework;
+using ConsoleAppFramework;
 using Cysharp.Diagnostics;
 
 var app = ConsoleApp.Create();
@@ -21,12 +21,16 @@ static class Commands
         {
             throw new ArgumentException("Not found `repo-get.root` in git globalconfig. Please set `repo-get.root` by `git config --global repo-get.root <root>`");
         }
+        if (BanSpecialCharInPath(root))
+        {
+            throw new ArgumentException("Cannot resolve path, please remove `$` or `~` from the path or write full-path.");
+        }
 
         var (userName, host) = await GetGitHubAuthInfo(cancellationToken);
 
         repository = CompleteRepositoryName(repository, userName);
 
-        var cloneTo = Path.Combine(root, string.IsNullOrEmpty(host) ? "github.com" : host, repository);
+        var cloneTo = Path.Combine(Path.GetFullPath(root), string.IsNullOrEmpty(host) ? "github.com" : host, repository);
 
         var cloneOptions = context.EscapedArguments!.ToArray();
         if (!noRecursive)
@@ -55,6 +59,12 @@ static class Commands
         }
 
         return string.Empty;
+    }
+
+    static bool BanSpecialCharInPath(string path)
+    {
+        return path.Any(x => Path.GetInvalidPathChars().Contains(x) || new[] { '$', '~' }.Contains(x))
+            || path.StartsWith('.');
     }
 
     async static ValueTask<(string userName, string host)> GetGitHubAuthInfo(CancellationToken cancellationToken)
