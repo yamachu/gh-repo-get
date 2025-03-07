@@ -1,109 +1,124 @@
-﻿using System.Diagnostics;
-using ConsoleAppFramework;
+﻿using ConsoleAppFramework;
+using Cysharp.Diagnostics;
 
-ConsoleApp.Run(args, ([Argument] string repository, ConsoleAppContext context, bool noRecursive = false) =>
+var app = ConsoleApp.Create();
+app.UseFilter<LoggerFilter>();
+app.Add("", Commands.Run);
+
+await app.RunAsync(args);
+
+static class Commands
 {
-    var root = GetGitGlobalConfig("repo-get.root");
-    if (string.IsNullOrEmpty(root))
+    /// <summary>
+    /// if passed [-- gitflags...], these parameters will be passed to gh repo clone commands
+    /// </summary>
+    /// <param name="repository">gh repo clone 's first parameter.</param>
+    /// <param name="noRecursive">if set this parameter, don't initialize submodule.</param>
+    public static async Task<int> Run([Argument] string repository, ConsoleAppContext context, CancellationToken cancellationToken, bool noRecursive = false)
     {
-        Console.Error.WriteLine("Not found `repo-get.root` in git globalconfig. Please set `repo-get.root` by `git config --global repo-get.root <root>`");
-        return;
+        var root = await GetGitGlobalConfig("repo-get.root", cancellationToken);
+        if (string.IsNullOrEmpty(root))
+        {
+            throw new ArgumentException("Not found `repo-get.root` in git globalconfig. Please set `repo-get.root` by `git config --global repo-get.root <root>`");
+        }
+
+        var (userName, host) = await GetGitHubAuthInfo(cancellationToken);
+
+        repository = CompleteRepositoryName(repository, userName);
+
+        var cloneTo = Path.Combine(root, string.IsNullOrEmpty(host) ? "github.com" : host, repository);
+
+        var cloneOptions = context.EscapedArguments!.ToArray();
+        if (!noRecursive)
+        {
+            cloneOptions = [.. cloneOptions, "--recursive"];
+        }
+
+        await CloneRepository(repository, cloneTo, cloneOptions, cancellationToken);
+
+        return 0;
     }
 
-    var (userName, host) = GetGitHubAuthInfo();
 
-    repository = CompleteRepositoryName(repository, userName);
-
-    var cloneTo = Path.Combine(root, string.IsNullOrEmpty(host) ? "github.com" : host, repository);
-
-    var cloneOptions = context.EscapedArguments!.ToArray();
-    if (!noRecursive)
+    async static ValueTask<string> GetGitGlobalConfig(string key, CancellationToken cancellationToken)
     {
-        cloneOptions = [.. cloneOptions, "--recursive"];
+        try
+        {
+            // NOTE: Currently, we don't support `--all` option, so cannot get multiple values.
+            var result = await ProcessX.StartAsync($"git config --global --get {key}")
+                .ToTask(cancellationToken);
+            return result.FirstOrDefault()?.Trim() ?? string.Empty;
+        }
+        catch (ProcessErrorException)
+        {
+            //
+        }
+
+        return string.Empty;
     }
 
-    CloneRepository(repository, cloneTo, cloneOptions);
-});
-
-string GetGitGlobalConfig(string key)
-{
-    // NOTE: Currently, we don't support `--all` option, so cannot get multiple values.
-    var startInfo = new ProcessStartInfo
+    async static ValueTask<(string userName, string host)> GetGitHubAuthInfo(CancellationToken cancellationToken)
     {
-        FileName = "git",
-        Arguments = $"config --global --get {key}",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-    };
+        var userName = string.Empty;
+        var host = string.Empty;
 
-    using var process = Process.Start(startInfo);
-    return process?.StandardOutput.ReadToEnd().Trim() ?? string.Empty;
+        try
+        {
+            var stdout = await ProcessX.StartAsync("gh auth status -a").ToTask(cancellationToken);
+            var authLine = stdout.FirstOrDefault(x => x.Contains("account"));
+
+            if (authLine != null)
+            {
+                var parts = authLine.Split(' ');
+                userName = parts.SkipWhile(x => x != "account").Skip(1).FirstOrDefault() ?? string.Empty;
+                host = parts.SkipWhile(x => x != "to").Skip(1).FirstOrDefault() ?? string.Empty;
+            }
+        }
+        catch (ProcessErrorException)
+        {
+            //
+        }
+
+        return (userName, host);
+    }
+
+    static string CompleteRepositoryName(string repository, string userName)
+    {
+        if (!repository.Contains("/"))
+        {
+            if (string.IsNullOrEmpty(userName))
+            {
+                throw new ArgumentException("Cannot determine the repository owner. Please run `gh auth login` or specify the repository owner name.");
+            }
+            return $"{userName}/{repository}";
+        }
+        return repository;
+    }
+
+    async static Task CloneRepository(string repository, string cloneTo, string[] options, CancellationToken cancellationToken)
+    {
+        var optionsArg = options.Length > 0 ? $"-- {string.Join(" ", options)}" : string.Empty;
+        var arguments = $"repo clone {repository} {cloneTo} {optionsArg}";
+
+        await ProcessX.StartAsync($"gh {arguments}").ToTask(cancellationToken);
+    }
+
 }
 
-(string userName, string host) GetGitHubAuthInfo()
+internal class LoggerFilter(ConsoleAppFilter next) : ConsoleAppFilter(next)
 {
-    var startInfo = new ProcessStartInfo
+    public override async Task InvokeAsync(ConsoleAppContext context, CancellationToken cancellationToken)
     {
-        FileName = "gh",
-        Arguments = "auth status -a",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-    };
-
-    using var process = Process.Start(startInfo);
-    process?.WaitForExit();
-
-    var userName = string.Empty;
-    var host = string.Empty;
-
-    if (process?.ExitCode == 0)
-    {
-        var output = process.StandardOutput.ReadToEnd().Split('\n');
-        var authLine = output.FirstOrDefault(x => x.Contains("account"));
-
-        if (authLine != null)
+        try
         {
-            var parts = authLine.Split(' ');
-            userName = parts.SkipWhile(x => x != "account").Skip(1).FirstOrDefault() ?? string.Empty;
-            host = parts.SkipWhile(x => x != "to").Skip(1).FirstOrDefault() ?? string.Empty;
+            await Next.InvokeAsync(context, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            if (ex is OperationCanceledException) return;
+
+            ConsoleApp.LogError(ex.Message);
+            Environment.ExitCode = 1;
         }
     }
-
-    return (userName, host);
-}
-
-string CompleteRepositoryName(string repository, string userName)
-{
-    if (!repository.Contains("/"))
-    {
-        if (string.IsNullOrEmpty(userName))
-        {
-            throw new ArgumentException("Cannot determine the repository owner. Please run `gh auth login` or specify the repository owner name.");
-        }
-        return $"{userName}/{repository}";
-    }
-    return repository;
-}
-
-void CloneRepository(string repository, string cloneTo, string[] options)
-{
-    var optionsArg = options.Length > 0 ? $"-- {string.Join(" ", options)}" : string.Empty;
-    var arguments = $"repo clone {repository} {cloneTo} {optionsArg}";
-
-    var startInfo = new ProcessStartInfo
-    {
-        FileName = "gh",
-        Arguments = arguments,
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-    };
-
-    using var process = Process.Start(startInfo);
-    process?.WaitForExit();
 }
