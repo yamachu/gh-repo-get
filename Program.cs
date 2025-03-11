@@ -9,6 +9,9 @@ await app.RunAsync(args);
 
 static class Commands
 {
+    const string configRootKey = "repo-get";
+    const string configRepositoryRootKey = "root";
+
     /// <summary>
     /// if passed [-- gitflags...], these parameters will be passed to gh repo clone commands
     /// </summary>
@@ -16,10 +19,10 @@ static class Commands
     /// <param name="noRecursive">if set this parameter, don't initialize submodule.</param>
     public static async Task<int> Run([Argument] string repository, ConsoleAppContext context, CancellationToken cancellationToken, bool noRecursive = false)
     {
-        var root = await GetGitGlobalConfig("repo-get.root", cancellationToken);
+        var root = await GetGitGlobalConfig($"{configRootKey}.{configRepositoryRootKey}", cancellationToken);
         if (string.IsNullOrEmpty(root))
         {
-            throw new ArgumentException("Not found `repo-get.root` in git globalconfig. Please set `repo-get.root` by `git config --global repo-get.root <root>`");
+            throw new ArgumentException($"Not found `{configRootKey}.{configRepositoryRootKey}` in git globalconfig. Please set `{configRootKey}.{configRepositoryRootKey}` by `git config --global {configRootKey}.{configRepositoryRootKey} <root>`");
         }
         if (BanSpecialCharInPath(root))
         {
