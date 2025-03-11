@@ -2,6 +2,9 @@
 
 mkdir -p dist
 
+# 引数にタグが与えられるため、そのタグを使用してファイル名を変更する
+tag=$1
+
 # support platforms, omitted some platforms for now
 # see: https://github.com/cli/gh-extension-precompile/blob/561b19deda1228a0edf856c3325df87416f8c9bd/build_and_release.sh#L4-L17
 platforms=(
@@ -18,7 +21,7 @@ for platform in "${platforms[@]}"; do
   os=${platform_split[0]}
   arch=${platform_split[1]}
 
-  output_name="dist/${os}-${arch}"
+  output_name="dist/gh-repo-get_${tag}_${os}-${arch}"
   if [ $os = "windows" ]; then
     output_name+=".exe"
   fi
