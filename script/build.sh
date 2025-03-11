@@ -21,7 +21,7 @@ for platform in "${platforms[@]}"; do
   os=${platform_split[0]}
   arch=${platform_split[1]}
 
-  output_name="dist/gh-repo-get_${tag}_${os}-${arch}"
+  output_name="dist/${os}-${arch}"
   if [ $os = "windows" ]; then
     output_name+=".exe"
   fi
