@@ -53,4 +53,5 @@ for platform in "${platforms[@]}"; do
 
   dotnet publish -r ${dotnet_runtime_platform}-${dotnet_runtime_arch} -p:DebugSymbols=false
   cp bin/Release/net9.0/${dotnet_runtime_platform}-${dotnet_runtime_arch}/publish/gh-repo-get${exe_name} ${output_name}
+  chmod +x ${output_name}
 done
