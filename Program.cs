@@ -1,4 +1,4 @@
-using ConsoleAppFramework;
+﻿using ConsoleAppFramework;
 using Cysharp.Diagnostics;
 
 var app = ConsoleApp.Create();
@@ -110,7 +110,34 @@ static class Commands
         var optionsArg = options.Length > 0 ? $"-- {string.Join(" ", options)}" : string.Empty;
         var arguments = $"repo clone {repository} {cloneTo} {optionsArg}";
 
-        await ProcessX.StartAsync($"gh {arguments}").ToTask(cancellationToken);
+        var (_, stdOut, stdErr) = ProcessX.GetDualAsyncEnumerable($"gh {arguments}");
+        var consumeStdOut = Task.Run(async () =>
+            {
+                await foreach (var item in stdOut)
+                {
+                    ConsoleApp.Log(item);
+                }
+            }, cancellationToken);
+
+        var errorBuffered = new List<string>();
+        var consumeStdError = Task.Run(async () =>
+            {
+                await foreach (var item in stdErr)
+                {
+                    ConsoleApp.LogError(item);
+                }
+            }, cancellationToken);
+
+        try
+        {
+            await Task.WhenAll(consumeStdOut, consumeStdError);
+        }
+        catch (ProcessErrorException ex)
+        {
+            if (ex.ExitCode == 0) return;
+            throw;
+        }
+
     }
 
 }
